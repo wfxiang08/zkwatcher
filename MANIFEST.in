@@ -1,0 +1,3 @@
+include README.rst
+include zkwatcher.1
+recursive-include extras zkwatcher
