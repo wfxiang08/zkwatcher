@@ -55,7 +55,7 @@ class CleanHook(clean):
 setup(
     name='zk_watcher',
     version=__version__,
-    description='zk_watcher is a Python script that handles registration with an Apache ZooKeeper service',
+    description='Python-based service registration daemon for Apache ZooKeeper',
     long_description=open('README.rst').read(),
     author='Matt Wise',
     author_email='matt@nextdoor.com',
