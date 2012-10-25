@@ -30,10 +30,10 @@ The goal of `zk_watcher` is to monitor a particular service on a host machine
 and register that machine as a `provider` of that service at a given path
 on the ZooKeeper service.
 
-A simple example is having `zk_watcher` monitor Apache by running `service
-apache2 status` at a regular interval and registers with Zookeeper at a given
+A simple example is having `zk_watcher` monitor Apache httpd by running `service
+apache2 status` at a regular interval and registers with ZooKeeper at a given
 path (say `/services/production/webservers`). As long as the command returns
-a safe exit code (`0`), `zk_watcher` will register with Zookeeper that this
+a safe exit code (`0`), `zk_watcher` will register with ZooKeeper that this
 server is providing this particular service. If the hostname of the machine
 is `web1.mydomain.com`, the registration path would look like this ::
 
@@ -70,4 +70,4 @@ OPTIONS
             Overrides the default config file location (/etc/zk/config.cfg)
 
 -s, --server=<server:port>
-            Overrides the default Zookeeper address (localhost:2181)
+            Overrides the default ZooKeeper address (localhost:2181)
