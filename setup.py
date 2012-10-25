@@ -59,7 +59,7 @@ setup(
     long_description=open('README.rst').read(),
     author='Matt Wise',
     author_email='matt@nextdoor.com',
-    url='https://github.com/Nextdoor/zk_watcher',
+    url='https://github.com/Nextdoor/zkwatcher',
     download_url='http://pypi.python.org/pypi/zk_watcher#downloads',
     license='Apache License, Version 2.0',
     keywords='zookeeper apache zk',
