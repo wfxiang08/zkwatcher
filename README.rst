@@ -9,10 +9,10 @@ The goal of `zk_watcher` is to monitor a particular service on a host machine
 and register that machine as a `provider` of that service at a given path
 on the ZooKeeper service.
 
-A simple example is having `zk_watcher` monitor Apache by running `service
-apache2 status` at a regular interval and registers with Zookeeper at a given
+A simple example is having `zk_watcher` monitor Apache httpd by running `service
+apache2 status` at a regular interval and registers with ZooKeeper at a given
 path (say `/services/production/webservers`). As long as the command returns
-a safe exit code (`0`), `zk_watcher` will register with Zookeeper that this
+a safe exit code (`0`), `zk_watcher` will register with ZooKeeper that this
 server is providing this particular service. If the hostname of the machine
 is `web1.mydomain.com`, the registration path would look like this ::
 
@@ -37,7 +37,7 @@ Setup
 
 To configure, edit the '/etc/zk/config.cfg' file. The file consists of sections
 that each point to a particular service you want to monitor and register with
-Zookeeper. An example file is provided, but could look like this ::
+ZooKeeper. An example file is provided, but could look like this ::
 
     [ssh]
     cmd: /etc/init.d/sshd status
