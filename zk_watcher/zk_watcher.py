@@ -62,7 +62,7 @@ import sys
 import zookeeper
 
 # Our default variables
-VERSION = '1.0'
+from version import __version__ as VERSION
 
 # Defaults
 PID = '/var/run/zk_watcher.pid'
