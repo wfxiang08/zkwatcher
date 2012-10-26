@@ -55,3 +55,11 @@ ZooKeeper. An example file is provided, but could look like this ::
 
     
 See the 'zk_watcher.rst' file for configuration and run-time options.
+
+Caveats
+-------
+Right now you must install this package as `root`, or you must create the
+`/etc/zk` directory ahead of time and change its ownership to your installation
+user name. The `setup.py` uses a hard-coded path (`/etc/zk/config.cfg`) for the
+config file, and will fail if it cannot create the file at that path. This will
+be fixed in the next version.
