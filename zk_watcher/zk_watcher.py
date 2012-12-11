@@ -276,11 +276,11 @@ class WatcherDaemon(object):
         # updating the data, state, etc.
         try:
             self._sr.register_node(fullpath, data, state)
-            self.log.info('[%s] sucessfully updated path %s with state %s' %
+            self.log.debug('[%s] sucessfully updated path %s with state %s' %
                          (service, fullpath, state))
             return True
         except Exception, e:
-            self.log.info('[%s] could not update path %s with state %s: %s' %
+            self.log.warn('[%s] could not update path %s with state %s: %s' %
                          (service, fullpath, state, e))
             return False
 
