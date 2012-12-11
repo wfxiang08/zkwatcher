@@ -14,7 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Daemon that monitors a set of services and updates ZooKeeper with their status.
+"""Daemon that monitors a set of services and updates a ServiceRegistry
+with their status.
 
 The purpose of this script is to monitor a given 'service' on a schedule
 defined by 'refresh' and register or de-register that service with an Apache
@@ -32,10 +33,10 @@ monitor the service. Eg:
   zookeeper_path: /services/prod-uswest1-mc
   zookeeper_data: foo=bar
 
-During the main runtime of the code we loop over the sections one by one. Each time
-we check a section, we double check when the last time it ran was compared to the
-'refresh' variable that is defined. If 'refresh' is less than 'lastrun', we run the check
-and update ZooKeeper accordingly.
+During the main runtime of the code we loop over the sections one by one. Each
+time we check a section, we double check when the last time it ran was
+compared to the 'refresh' variable that is defined. If 'refresh' is less than
+'lastrun', we run the check and update ZooKeeper accordingly.
 
 Copyright 2012 Nextdoor Inc.
 References: http://code.activestate.com/recipes/66012/
@@ -76,15 +77,19 @@ RUN_STATE = True
 
 # First handle all of the options passed to us
 usage = 'usage: %prog <options>'
-parser = optparse.OptionParser(usage=usage, version=VERSION, add_help_option=True)
+parser = optparse.OptionParser(usage=usage, version=VERSION,
+                               add_help_option=True)
 parser.set_defaults(verbose=True)
-parser.add_option('-c', '--config', dest='config', default='/etc/zk/config.cfg',
+parser.add_option('-c', '--config', dest='config',
+                  default='/etc/zk/config.cfg',
                   help='override the default config file (/etc/zk/config.cfg)')
 parser.add_option('-s', '--server', dest='server', default=ZOOKEEPER_URL,
                   help='server address (default: localhost:2181')
-parser.add_option('-v', '--verbose', action='store_true', dest='verbose', default=False,
+parser.add_option('-v', '--verbose', action='store_true', dest='verbose',
+                  default=False,
                   help='verbose mode')
-parser.add_option('-f', '--foreground', action='store_true', dest='foreground', default=False,
+parser.add_option('-f', '--foreground', action='store_true', dest='foreground',
+                  default=False,
                   help='foreground mode')
 (options, args) = parser.parse_args()
 
@@ -97,8 +102,8 @@ class NullHandler(logging.Handler):
 class WatcherDaemon(object):
     """The main daemon process.
 
-    This is the main object that defines all of our major functions and connection
-    information."""
+    This is the main object that defines all of our major functions and
+    connection information."""
 
     def __init__(self, config_file, pidfile, foreground=False, verbose=False):
         """Initilization code for the main WatcherDaemon.
@@ -118,7 +123,8 @@ class WatcherDaemon(object):
         # Set our pidfile so that the 'daemon' module can read it
         self.pidfile = PID
 
-        # We set this here just so that we avoid unnecessary DNS calls in our loops.
+        # We set this here just so that we avoid unnecessary DNS calls in our
+        # loops.
         self.hostname = socket.getfqdn()
 
         # Bring in our configuration options
@@ -228,8 +234,8 @@ class WatcherDaemon(object):
                         self.update(service, state=False)
 
                     # Now that our service check is done, update our lastrun{}
-                    # array with the current time, so that we can check how long
-                    # its been since the last run.
+                    # array with the current time, so that we can check how
+                    # long its been since the last run.
                     lastrun[service] = time.time()
 
             # Sleep for one second just so that we dont run in a crazy loop
@@ -241,7 +247,6 @@ class WatcherDaemon(object):
             self.log.info('shutting down ServiceRegistry object.')
             #self.sr.close()  # NOT IMPLEMENTED
             self.log.info('exiting')
-
 
     def update(self, service, state):
         # Get config data for our service
@@ -272,15 +277,15 @@ class WatcherDaemon(object):
         try:
             self._sr.register_node(fullpath, data, state)
             self.log.info('[%s] sucessfully updated path %s with state %s' %
-                (service, fullpath, state))
+                         (service, fullpath, state))
             return True
         except Exception, e:
             self.log.info('[%s] could not update path %s with state %s: %s' %
-                (service, fullpath, state, e))
+                         (service, fullpath, state, e))
             return False
 
     def run_command(self, cmd):
-        """ Runs a supplied command and returns whether it was sucessful or not."""
+        """ Runs a supplied command and returns whether it was sucessfu."""
         self.cmd = cmd
 
         # Deliberately do not capture any output. Using PIPEs (stdin/er/out)
