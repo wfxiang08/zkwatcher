@@ -37,7 +37,7 @@ we check a section, we double check when the last time it ran was compared to th
 'refresh' variable that is defined. If 'refresh' is less than 'lastrun', we run the check
 and update ZooKeeper accordingly.
 
-Copyright 2011 Nextdoor Inc.
+Copyright 2012 Nextdoor Inc.
 References: http://code.activestate.com/recipes/66012/
 Advanced Programming in the Unix Environment by W. Richard Stevens
 """
@@ -54,12 +54,13 @@ import subprocess
 import time
 import signal
 import ConfigParser
-import zc.zk
 import logging
 import logging.handlers
 import os
 import sys
-import zookeeper
+
+# Get our ServiceRegistry class
+from ndServiceRegistry import KazooServiceRegistry as ServiceRegistry
 
 # Our default variables
 from version import __version__ as VERSION
@@ -124,18 +125,19 @@ class WatcherDaemon(object):
         self.config = ConfigParser.ConfigParser()
         self.config.read(config_file)
 
-    def setup_logger(self, name=''):
+    def setup_logger(self, name=None):
         """Create a logging object."""
 
         # Get our logger
         logger = logging.getLogger(name)
         # Set our logging level
-        format = 'zk_watcher[' + str(self.pid) + ',%(threadName)s]: (%(levelname)s) %(message)s'
-        logger.setLevel(logging.DEBUG)
+        format = 'zk_watcher[' + str(self.pid) + ',%(name)s,%(thread)d' \
+                 ',%(funcName)s]: (%(levelname)s) %(message)s'
+        logger.setLevel(logging.INFO)
         # Create and configure our handlers..
         formatter = logging.Formatter(format)
-        # If we're running in the foreground, then output to the screen. if we're
-        # running as a daemon though, then pipe to syslog
+        # If we're running in the foreground, then output to the screen. if
+        # we're running as a daemon though, then pipe to syslog
         if self.verbose and self.foreground:
             handler = logging.StreamHandler()
         else:
@@ -161,32 +163,32 @@ class WatcherDaemon(object):
     def run(self):
         """This function is called at daemon 'start' or 'restart' time.
 
-        This is the meat of the code. This definition runs in a loop (once per 2 seconds),
-        and inside that loop it walks through all of the services defined in the config
-        file and checks whether they're running or not.
+        This is the meat of the code. This definition runs in a loop (once per
+        2 seconds), and inside that loop it walks through all of the services
+        defined in the config file and checks whether they're running or not.
 
-        If sigterm sets RUN_STATE to False, we clean up our ZooKeeper connection
-        and then exit."""
+        If sigterm sets RUN_STATE to False, we clean up our ZooKeeper
+        connection and then exit."""
 
-        # Once we're running, set our PID number here. This cannot be done in __init__
-        # because the thread that calls __init__ is not the same PID as the actual
-        # running ademon
+        # Once we're running, set our PID number here. This cannot be done in
+        # __init__ because the thread that calls __init__ is not the same PID
+        # as the actual running ademon
         self.pid = os.getpid()
 
-        self.log = self.setup_logger('Main')
+        self.log = self.setup_logger()
         self.log.info('WatcherDaemon %s' % VERSION)
 
         # Register our Signal handler so that we can shut down properly
         self.setSigHandler()
 
-        # Create a ZooKeeper specific logger. Its a little strange, nbut we just have to creat it
-        # here before we initiate the ZooKeeper object.
-        self.log.info('Connecting to ZooKeeper Service (%s)' % options.server)
-        self.zk_log = self.setup_logger('ZooKeeper')
-        self.zk = zc.zk.ZooKeeper(options.server, session_timeout=ZOOKEEPER_SESSION_TIMEOUT_USEC, wait=True)
+        # Create our ServiceRegistry object
+        self._sr = ServiceRegistry(server=options.server,
+                                   readonly=False,
+                                   lazy=True)
 
-        # Create an array that manages our 'last run' times for each of our configs. This way we can
-        # monitor whether a service is over-due for a service check or not.
+        # Create an array that manages our 'last run' times for each of our
+        # configs. This way we can monitor whether a service is over-due for a
+        # service check or not.
         lastrun = {}
 
         while RUN_STATE:
@@ -194,96 +196,61 @@ class WatcherDaemon(object):
                 cmd = self.config.get(service, 'cmd')
                 refresh = self.config.getint(service, 'refresh')
 
-                # If this is our first run through the loop, then lastrun{} is empty so
-                # we need to initialize it with a 0 so that we force our first check of
-                # the service to run
+                # If this is our first run through the loop, then lastrun{}
+                # is empty so we need to initialize it with a 0 so that we
+                # force our first check of the service to run
                 if service not in lastrun:
-                    self.log.debug('[%s] Setting lastrun to 0 to force a run...' % service)
+                    self.log.debug('[%s] Setting lastrun to 0 to force '
+                                   'a run...' % service)
                     lastrun[service] = 0
 
-                # Don't run our check unless its been greater-than our refresh time
+                # Don't run our check unless its been greater-than our refresh
+                # time
                 since_last_check = time.time() - lastrun[service]
                 if since_last_check > refresh:
-                    self.log.debug('[%s] %s(s) since last service check... Running check now [%s]' %
+                    self.log.debug('[%s] %s(s) since last service check... '
+                                   'Running check now [%s]' %
                                    (service, since_last_check, cmd))
 
-                    # First, run our service check command and see what the return code is
+                    # First, run our service check command and see what the
+                    # return code is
                     ret = self.run_command(cmd)
 
                     if ret == 0:
                         # If the command was successfull...
-                        self.log.info('[%s] [%s] returned successfully.' % (service, cmd))
-                        self.zookeeper_register(service)
+                        self.log.info('[%s] [%s] returned successfully.' %
+                                     (service, cmd))
+                        self.update(service, state=True)
                     else:
                         # If the command failed...
-                        self.log.info('[%s] [%s] returned a failed exit code [%s].' %
-                                      (service, self.cmd, ret))
-                        self.zookeeper_unregister(service)
+                        self.log.info('[%s] [%s] returned a failed exit code '
+                                      '[%s].' % (service, self.cmd, ret))
+                        self.update(service, state=False)
 
-                    # Now that our service check is done, update our lastrun{} array with
-                    # the current time, so that we can check how long its been since the
-                    # last run.
+                    # Now that our service check is done, update our lastrun{}
+                    # array with the current time, so that we can check how long
+                    # its been since the last run.
                     lastrun[service] = time.time()
 
-            # Sleep for one second just so that we dont run in a crazy loop taking up
-            # all kinds of resources.
+            # Sleep for one second just so that we dont run in a crazy loop
+            # taking up all kinds of resources.
             time.sleep(2)
 
         else:
             # global run status has changed
-            self.log.info('shutting down zookeeper connection.')
-            self.zk.close()
-
+            self.log.info('shutting down ServiceRegistry object.')
+            #self.sr.close()  # NOT IMPLEMENTED
             self.log.info('exiting')
 
-    def zookeeper_check(self):
-        """ checks if ZooKeeper connection is active or not """
-        self.log.debug('zookeeper_check: checking ZooKeeper connection state...')
-        if self.zk.state == zookeeper.CONNECTED_STATE:
-            self.log.debug('zookeeper_check: connection is good...')
-            return True
-        else:
-            self.log.debug('zookeeper_check: connection FAILED...')
-            return False
 
-    def zookeeper_unregister(self, service):
-        self.log.debug('[%s] checking if registered with zookeeper. if so, removing....' % service)
-
+    def update(self, service, state):
         # Get config data for our service
         service_port = self.config.get(service, 'service_port')
         zookeeper_path = self.config.get(service, 'zookeeper_path')
 
-        # Check if ZOoKeeper is live
-        if not self.zookeeper_check():
-            self.log.info('[%s] zookeeper service is down right now, skipping deregistration...' % service)
-            return False
-
-        # Check if the host exists already or not. If it does, compare its PID
-        # with our own. If they're the same, just exit quietly.
-        t_nought = time.time()
-        fullpath = '%s/%s:%s' % (zookeeper_path, self.hostname, service_port)
-        if self.zk.exists(fullpath):
-            self.log.info('[%s] found existing %s path... deleting.' %
-                         (service, fullpath))
-            self.zk.delete(fullpath)
-
-        # Now, return our registration state
-        return self.zk.exists(fullpath)
-
-    def zookeeper_register(self, service):
-        self.log.debug('[%s] checking if registered with zookeeper. if not, adding....' % service)
-
-        # Get config data for our service
-        service_port = self.config.get(service, 'service_port')
-        zookeeper_path = self.config.get(service, 'zookeeper_path')
-
-        # Check if ZOoKeeper is live
-        if not self.zookeeper_check():
-            self.log.info('[%s] zookeeper service is down right now, skipping registration...' % service)
-            return False
-
-        # If any options are supplied to the zookeeper_data field, then we add them to our node
-        # registration. The values must be comma-separated and equals-separated. eg:
+        # If any options are supplied to the zookeeper_data field, then we add
+        # them to our node registration. The values must be comma-separated
+        # and equals-separated. eg:
         #
         # zookeeper_data = foo=bar,abc=123
         data = {}
@@ -295,49 +262,35 @@ class WatcherDaemon(object):
                     value = pair.split('=')[1]
                     data[key] = value
 
-        # Check if our dest path exists first
-        if not self.zk.exists(zookeeper_path):
-            self.zk.create_recursive(zookeeper_path, '', zc.zk.OPEN_ACL_UNSAFE)
-
         # Check if the host exists already or not. If it does, compare its PID
         # with our own. If they're the same, just exit quietly.
         fullpath = '%s/%s:%s' % (zookeeper_path, self.hostname, service_port)
 
-        # One-time, create a properties generator that will let us check the PID
-        if self.zk.exists(fullpath):
-            # Deliberately use get_properties instead of properties object. get_properties is a
-            # one-time run that doesnt create a generator or any additional objects.
-            child = self.zk.get_properties(fullpath)
-
-            if child['pid'] != self.pid:
-                self.log.debug('[%s] found %s, but its PID (%s) is not ours (%s). deleting it...' %
-                              (service, fullpath, child.get('pid'), self.pid))
-                self.zk.delete(fullpath)
-            else:
-                self.log.debug('[%s] found %s, and it belongs to us. ignoring it.' %
-                              (service, fullpath))
-                return True
-
-        # Ok, the entry no longer exists (or never did). Now lets register ourselves
+        # Call ServiceRegistry.register_node() method with our state, data,
+        # path information. The ServiceRegistry module will take care of
+        # updating the data, state, etc.
         try:
-            self.zk.register_server(zookeeper_path, (self.hostname, service_port), **data)
-            self.log.info('[%s] sucessfully registered path %s' % (service, fullpath))
+            self._sr.register_node(fullpath, data, state)
+            self.log.info('[%s] sucessfully updated path %s with state %s' %
+                (service, fullpath, state))
             return True
-        except:
-            self.log.info('[%s] could not register at path %s' % (service, fullpath))
+        except Exception, e:
+            self.log.info('[%s] could not update path %s with state %s: %s' %
+                (service, fullpath, state, e))
             return False
 
     def run_command(self, cmd):
         """ Runs a supplied command and returns whether it was sucessful or not."""
         self.cmd = cmd
 
-        # Deliberately do not capture any output. Using PIPEs (stdin/er/out) can cause
-        # deadlocks according to the Python documentation here
+        # Deliberately do not capture any output. Using PIPEs (stdin/er/out)
+        # can cause deadlocks according to the Python documentation here
         # (http://docs.python.org/library/subprocess.html)
         #
-        # "Warning This will deadlock when using stdout=PIPE and/or stderr=PIPE and the child
-        # process generates enough output to a pipe such that it blocks waiting for the OS pipe
-        # buffer to accept more data. Use communicate() to avoid that."
+        # "Warning This will deadlock when using stdout=PIPE and/or
+        # stderr=PIPE and the child process generates enough output to a pipe
+        # such that it blocks waiting for the OS pipe buffer to accept more
+        # data. Use communicate() to avoid that."
         #
         # We only care about the exit code of the command anyways...
         process = subprocess.Popen(
@@ -353,13 +306,15 @@ class WatcherDaemon(object):
         while process.poll() is None:
             seconds_passed = time.time() - t_nought
 
-            # While we wait for the process to complete, make sure we always 'communicate' with it
-            # so that if it tries to output to 'stdout' or 'stderr', it wont fail.
+            # While we wait for the process to complete, make sure we always
+            # 'communicate' with it so that if it tries to output to 'stdout'
+            # or 'stderr', it wont fail.
             output = process.communicate()
 
             # if the process hasnt died, and we pass our timeout...
             if seconds_passed >= 90:
-                self.log.info('[%s] timed out (90s max timeout). exiting with error code.' % cmd)
+                self.log.info('[%s] timed out (90s max timeout). exiting with '
+                              'error code.' % cmd)
                 process.kill()
                 return 1
 
