@@ -72,8 +72,7 @@ setup(
         ('/etc/zk', ['extras/zk/config.cfg']),
     ],
     install_requires=[
-        'zc.zk',
-        'zc-zookeeper-static',
+        'ndServiceRegistry'
         'python-daemon',
         'setuptools',
     ],
