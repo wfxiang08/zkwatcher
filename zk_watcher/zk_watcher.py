@@ -218,6 +218,12 @@ class Watcher(threading.Thread):
 
         self.log.debug('Watcher %s is exiting the run() loop.' % self._service)
 
+    def stop(self):
+        """Stop the run() loop."""
+        self._event.set()
+        self.update(False)
+        
+
     def update(self, state):
         # Call ServiceRegistry.register_node() method with our state, data,
         # path information. The ServiceRegistry module will take care of
