@@ -33,11 +33,6 @@ monitor the service. Eg:
   zookeeper_path: /services/prod-uswest1-mc
   zookeeper_data: foo=bar
 
-During the main runtime of the code we loop over the sections one by one. Each
-time we check a section, we double check when the last time it ran was
-compared to the 'refresh' variable that is defined. If 'refresh' is less than
-'lastrun', we run the check and update ZooKeeper accordingly.
-
 Copyright 2012 Nextdoor Inc.
 References: http://code.activestate.com/recipes/66012/
 Advanced Programming in the Unix Environment by W. Richard Stevens
@@ -46,12 +41,11 @@ Advanced Programming in the Unix Environment by W. Richard Stevens
 __author__ = 'matt@nextdoor.com (Matt Wise)'
 
 from sys import stdout, stderr
-import daemon
-import daemon.runner
 import re
 import optparse
 import socket
 import subprocess
+import threading
 import time
 import signal
 import ConfigParser
@@ -67,7 +61,6 @@ from ndServiceRegistry import KazooServiceRegistry as ServiceRegistry
 from version import __version__ as VERSION
 
 # Defaults
-PID = '/var/run/zk_watcher.pid'
 LOG = '/var/log/zk_watcher.log'
 ZOOKEEPER_SESSION_TIMEOUT_USEC = 300000  # microseconds
 ZOOKEEPER_URL = 'localhost:2181'
@@ -88,265 +81,255 @@ parser.add_option('-s', '--server', dest='server', default=ZOOKEEPER_URL,
 parser.add_option('-v', '--verbose', action='store_true', dest='verbose',
                   default=False,
                   help='verbose mode')
-parser.add_option('-f', '--foreground', action='store_true', dest='foreground',
+parser.add_option('-l', '--syslog', action='store_true', dest='syslog',
                   default=False,
-                  help='foreground mode')
+                  help='log to syslog')
 (options, args) = parser.parse_args()
 
 
-class NullHandler(logging.Handler):
-    def emit(self, record):
-        pass
-
-
-class WatcherDaemon(object):
+class WatcherDaemon(threading.Thread):
     """The main daemon process.
 
     This is the main object that defines all of our major functions and
     connection information."""
 
-    def __init__(self, config_file, pidfile, foreground=False, verbose=False):
+    LOGGER = 'WatcherDaemon'
+
+    def __init__(self, server, config_file, verbose=False):
         """Initilization code for the main WatcherDaemon.
 
         Set up our local logger reference, and pid file locations."""
+        # Initiate our thread
+        super(WatcherDaemon, self).__init__()
 
-        # stdout/stdin/stderr are required by bda.daemon even if we arent
-        # actively using them. set them to /dev/null
-        self.pidfile_path = pidfile
-        self.pidfile_timeout = 5
-        self.stdin_path = '/dev/null'
-        self.stdout_path = LOG
-        self.stderr_path = LOG
-        self.foreground = foreground
-        self.verbose = verbose
-
-        # Set our pidfile so that the 'daemon' module can read it
-        self.pidfile = PID
-
-        # We set this here just so that we avoid unnecessary DNS calls in our
-        # loops.
-        self.hostname = socket.getfqdn()
+        self._watchers = []
 
         # Bring in our configuration options
-        self.config = ConfigParser.ConfigParser()
-        self.config.read(config_file)
+        self._config = ConfigParser.ConfigParser()
+        self._config.read(config_file)
 
-    def setup_logger(self, name=None):
-        """Create a logging object."""
-
-        # Get our logger
-        logger = logging.getLogger(name)
-        # Set our logging level
-        format = 'zk_watcher[' + str(self.pid) + ',%(name)s,%(thread)d' \
-                 ',%(funcName)s]: (%(levelname)s) %(message)s'
-        logger.setLevel(logging.INFO)
-        # Create and configure our handlers..
-        formatter = logging.Formatter(format)
-        # If we're running in the foreground, then output to the screen. if
-        # we're running as a daemon though, then pipe to syslog
-        if self.verbose and self.foreground:
-            handler = logging.StreamHandler()
-        else:
-            handler = logging.handlers.SysLogHandler('/dev/log', 'syslog')
-
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        return logger
-
-    def sigterm(self, signal_number, frame):
-        """Sigterm handler."""
-        global RUN_STATE
-        if RUN_STATE:
-            self.log.info('SIGTERM called. Terminating.')
-            mypid = os.getpid()
-            os.kill(mypid, 9)
-            RUN_STATE = False
-
-    def setSigHandler(self):
-        """Watches for a SIGTERM from sys and triggers a shutdown."""
-        signal.signal(signal.SIGTERM, self.sigterm)
-
-    def run(self):
-        """This function is called at daemon 'start' or 'restart' time.
-
-        This is the meat of the code. This definition runs in a loop (once per
-        2 seconds), and inside that loop it walks through all of the services
-        defined in the config file and checks whether they're running or not.
-
-        If sigterm sets RUN_STATE to False, we clean up our ZooKeeper
-        connection and then exit."""
-
-        # Once we're running, set our PID number here. This cannot be done in
-        # __init__ because the thread that calls __init__ is not the same PID
-        # as the actual running ademon
-        self.pid = os.getpid()
-
-        self.log = self.setup_logger()
+        self.log = logging.getLogger(self.LOGGER)
         self.log.info('WatcherDaemon %s' % VERSION)
 
-        # Register our Signal handler so that we can shut down properly
-        self.setSigHandler()
+        # Get a logger for ndServiceRegistry and set it to be quiet
+        self.nd_log = logging.getLogger('ndServiceRegistry')
+
+        # Set up our threading environment
+        self._event = threading.Event()
+
+        # These threads can die with prejudice. Make sure that any time the
+        # python interpreter exits, we exit immediately
+        self.setDaemon(True)
 
         # Create our ServiceRegistry object
-        self._sr = ServiceRegistry(server=options.server,
-                                   readonly=False,
-                                   lazy=True)
+        self._sr = ServiceRegistry(server=server, lazy=True)
 
-        # Create an array that manages our 'last run' times for each of our
-        # configs. This way we can monitor whether a service is over-due for a
-        # service check or not.
-        lastrun = {}
+        # Start up
+        self.start()
 
-        while RUN_STATE:
-            for service in self.config.sections():
-                cmd = self.config.get(service, 'cmd')
-                refresh = self.config.getint(service, 'refresh')
+    def run(self):
+        """Start up all of the worker threads and keep an eye on them"""
 
-                # If this is our first run through the loop, then lastrun{}
-                # is empty so we need to initialize it with a 0 so that we
-                # force our first check of the service to run
-                if service not in lastrun:
-                    self.log.debug('[%s] Setting lastrun to 0 to force '
-                                   'a run...' % service)
-                    lastrun[service] = 0
+        # Create our individual watcher threads from the config sections
+        for service in self._config.sections():
+            w = Watcher(registry=self._sr,
+                        service=service,
+                        service_port=self._config.get(service, 'service_port'),
+                        command=self._config.get(service, 'cmd'),
+                        path=self._config.get(service, 'zookeeper_path'),
+                        data={},
+                        refresh=self._config.get(service, 'refresh'))
+            self._watchers.append(w)
 
-                # Don't run our check unless its been greater-than our refresh
-                # time
-                since_last_check = time.time() - lastrun[service]
-                if since_last_check > refresh:
-                    self.log.debug('[%s] %s(s) since last service check... '
-                                   'Running check now [%s]' %
-                                   (service, since_last_check, cmd))
+        # Now, loop. Wait for a death signal
+        while True and not self._event.is_set():
+            self._event.wait(1)
 
-                    # First, run our service check command and see what the
-                    # return code is
-                    ret = self.run_command(cmd)
+        # At this point we must be exiting. Kill off our above threads
+        for w in self._watchers:
+            w.stop()
 
-                    if ret == 0:
-                        # If the command was successfull...
-                        self.log.info('[%s] [%s] returned successfully.' %
-                                     (service, cmd))
-                        self.update(service, state=True)
-                    else:
-                        # If the command failed...
-                        self.log.info('[%s] [%s] returned a failed exit code '
-                                      '[%s].' % (service, self.cmd, ret))
-                        self.update(service, state=False)
+    def stop(self):
+        self._event.set()
 
-                    # Now that our service check is done, update our lastrun{}
-                    # array with the current time, so that we can check how
-                    # long its been since the last run.
-                    lastrun[service] = time.time()
+
+class Watcher(threading.Thread):
+    """Monitors a particular service definition."""
+
+    LOGGER = 'WatcherDaemon.Watcher'
+
+    def __init__(self, registry, service, service_port, command, path, data,
+                 name=socket.getfqdn(), refresh=15):
+        """Initialize the object and begin monitoring the service."""
+        # Initiate our thread
+        super(Watcher, self).__init__()
+
+        self._sr = registry
+        self._service = service
+        self._service_port = service_port
+        self._command = command
+        self._refresh = int(refresh)
+        self._path = path
+        self._data = data
+        self._fullpath = '%s/%s:%s' % (path, name, service_port)
+        self.log = logging.getLogger('%s.%s' % (self.LOGGER, self._service))
+        self.log.debug('Initializing...')
+
+        self._event = threading.Event()
+        self.setDaemon(True)
+        self.start()
+
+    def run(self):
+        """Monitors the supplied service, and keeps it registered.
+
+        We loop every second, checking whether or not we need to run our
+        check. If we do, we run the check. If we don't, we wait until
+        we need to, or we receive a stop."""
+
+        last_checked = 0
+        self.log.debug('Beginning run() loop')
+        while True and not self._event.is_set():
+            if time.time() - last_checked > self._refresh:
+                self.log.debug('[%s] running' % self._command)
+
+                # First, run our service check command and see what the
+                # return code is
+                c = Command(self._command, self._service)
+                ret = c.run(timeout=90)
+
+                if ret == 0:
+                    # If the command was successfull...
+                    self.log.info('[%s] returned successfully' % self._command)
+                    self.update(state=True)
+                else:
+                    # If the command failed...
+                    self.log.warning('[%s] returned a failed exit code [%s]' %
+                                     (self._command, ret))
+                    self.update(state=False)
+
+                # Now that our service check is done, update our lastrun{}
+                # array with the current time, so that we can check how
+                # long its been since the last run.
+                last_checked = time.time()
 
             # Sleep for one second just so that we dont run in a crazy loop
             # taking up all kinds of resources.
-            time.sleep(2)
+            self._event.wait(1)
 
-        else:
-            # global run status has changed
-            self.log.info('shutting down ServiceRegistry object.')
-            #self.sr.close()  # NOT IMPLEMENTED
-            self.log.info('exiting')
+        self.log.debug('Watcher %s is exiting the run() loop.' % self._service)
 
-    def update(self, service, state):
-        # Get config data for our service
-        service_port = self.config.get(service, 'service_port')
-        zookeeper_path = self.config.get(service, 'zookeeper_path')
-
-        # If any options are supplied to the zookeeper_data field, then we add
-        # them to our node registration. The values must be comma-separated
-        # and equals-separated. eg:
-        #
-        # zookeeper_data = foo=bar,abc=123
-        data = {}
-        if self.config.has_option(service, 'zookeeper_data'):
-            raw_data = self.config.get(service, 'zookeeper_data')
-            for pair in raw_data.split(','):
-                if pair.split('=').__len__() == 2:
-                    key = pair.split('=')[0]
-                    value = pair.split('=')[1]
-                    data[key] = value
-
-        # Check if the host exists already or not. If it does, compare its PID
-        # with our own. If they're the same, just exit quietly.
-        fullpath = '%s/%s:%s' % (zookeeper_path, self.hostname, service_port)
-
+    def update(self, state):
         # Call ServiceRegistry.register_node() method with our state, data,
         # path information. The ServiceRegistry module will take care of
         # updating the data, state, etc.
         try:
-            self._sr.register_node(fullpath, data, state)
+            self._sr.register_node(self._fullpath, self._data, state)
             self.log.debug('[%s] sucessfully updated path %s with state %s' %
-                         (service, fullpath, state))
+                          (self._service, self._fullpath, state))
             return True
         except Exception, e:
             self.log.warn('[%s] could not update path %s with state %s: %s' %
-                         (service, fullpath, state, e))
+                         (self._service, self._fullpath, state, e))
             return False
 
-    def run_command(self, cmd):
-        """ Runs a supplied command and returns whether it was sucessfu."""
-        self.cmd = cmd
 
-        # Deliberately do not capture any output. Using PIPEs (stdin/er/out)
-        # can cause deadlocks according to the Python documentation here
-        # (http://docs.python.org/library/subprocess.html)
-        #
-        # "Warning This will deadlock when using stdout=PIPE and/or
-        # stderr=PIPE and the child process generates enough output to a pipe
-        # such that it blocks waiting for the OS pipe buffer to accept more
-        # data. Use communicate() to avoid that."
-        #
-        # We only care about the exit code of the command anyways...
-        process = subprocess.Popen(
-            cmd.split(' '),
-            shell=False,
-            stdout=open('/dev/null', 'w'),
-            stderr=None,
-            stdin=None)
+class Command(object):
+    """Wrapper to run a command with a timeout for safety."""
 
-        # Wait for the process to finish, or for our hard-coded timeout to fail
-        t_nought = time.time()
-        seconds_passed = 0
-        while process.poll() is None:
-            seconds_passed = time.time() - t_nought
+    LOGGER = 'WatcherDaemon.Command'
 
-            # While we wait for the process to complete, make sure we always
-            # 'communicate' with it so that if it tries to output to 'stdout'
-            # or 'stderr', it wont fail.
-            output = process.communicate()
+    def __init__(self, cmd, service):
+        """Initialize the Command object.
 
-            # if the process hasnt died, and we pass our timeout...
-            if seconds_passed >= 90:
-                self.log.info('[%s] timed out (90s max timeout). exiting with '
-                              'error code.' % cmd)
-                process.kill()
+        This object can be created once, and run many times. Each time it
+        runs we initiate a small thread to run our process, and if that
+        process times out, we kill it."""
+
+        self._cmd = cmd
+        self._process = None
+        self.log = logging.getLogger('%s.%s' % (self.LOGGER, service))
+
+    def run(self, timeout):
+        def target():
+            self.log.debug('[%s] started...' % self._cmd)
+            # Deliberately do not capture any output. Using PIPEs can
+            # cause deadlocks according to the Python documentation here
+            # (http://docs.python.org/library/subprocess.html)
+            #
+            # "Warning This will deadlock when using stdout=PIPE and/or
+            # stderr=PIPE and the child process generates enough output to
+            # a pipe such that it blocks waiting for the OS pipe buffer to
+            # accept more # data. Use communicate() to avoid that."
+            #
+            # We only care about the exit code of the command anyways...
+            try:
+                self._process = subprocess.Popen(
+                    self._cmd.split(' '),
+                    shell=False,
+                    stdout=open('/dev/null', 'w'),
+                    stderr=None,
+                    stdin=None)
+                self._process.communicate()
+            except OSError, e:
+                self.log.warn('Failed to run: %s' % e)
                 return 1
+            self.log.debug('[%s] finished... returning %s' %
+                          (self._cmd, self._process.returncode))
 
-        # If verbose, tell us how long it took to run the command
-        self.log.debug('[%s] took %s to finish and returned %s' %
-                      (cmd, seconds_passed, process.returncode))
-        # Looks like the process finished, now lets return its error code
-        return process.returncode
+        thread = threading.Thread(target=target)
+        thread.start()
+
+        thread.join(timeout)
+        if thread.is_alive():
+            self.log.debug('[%s] taking too long to respond, terminating.' %
+                           self._cmd)
+            try:
+                self._process.terminate()
+            except:
+                pass
+            thread.join()
+
+        # If the subprocess.Popen() fails for any reason, it returns 1... but
+        # because its in a thread, we never actually see that error code.
+        if self._process:
+            return self._process.returncode
+        else:
+            return 1
 
 
 def main():
+    # Get our logger
+    logger = logging.getLogger()
+    pid = os.getpid()
+    format = 'zk_watcher[' + str(pid) + ',%(name)s' \
+             ',%(funcName)s]: (%(levelname)s) %(message)s'
+    formatter = logging.Formatter(format)
+
+    if options.verbose:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.INFO)
+
+    if options.syslog:
+        handler = logging.handlers.SysLogHandler('/dev/log', 'syslog')
+    else:
+        handler = logging.StreamHandler()
+
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
     # Define our WatcherDaemon object..
     watcher = WatcherDaemon(
         config_file=options.config,
-        pidfile=PID,
-        foreground=options.foreground,
+        server=options.server,
         verbose=options.verbose)
 
-    if options.foreground:
-        watcher.run()
-        return
-    else:
-        daemon_runner = daemon.runner.DaemonRunner(watcher)
-        #daemon_runner.daemon_context.files_preserve = [log.root.handlers[0]]
-        daemon_runner.parse_args()
-        daemon_runner.do_action()
-
+    while True:
+        try:
+            time.sleep(1)
+        except KeyboardInterrupt:
+            logger.info('Exiting')
+            break
 
 if __name__ == '__main__':
     main()

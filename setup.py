@@ -73,7 +73,6 @@ setup(
     ],
     install_requires=[
         'ndServiceRegistry'
-        'python-daemon',
         'setuptools',
     ],
     classifiers=[
