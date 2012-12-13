@@ -112,7 +112,7 @@ class WatcherDaemon(threading.Thread):
         self.log.info('WatcherDaemon %s' % VERSION)
 
         # Get a logger for ndServiceRegistry and set it to be quiet
-        self.nd_log = logging.getLogger('ndServiceRegistry')
+        nd_log = logging.getLogger('ndServiceRegistry')
 
         # Set up our threading environment
         self._event = threading.Event()
@@ -225,11 +225,14 @@ class Watcher(threading.Thread):
         
 
     def update(self, state):
-        # Call ServiceRegistry.register_node() method with our state, data,
+        # Call ServiceRegistry.set() method with our state, data,
         # path information. The ServiceRegistry module will take care of
         # updating the data, state, etc.
+        self.log.debug('Attempting to update service [%s] with '
+                       'data [%s], and state [%s].' %
+                       (self._service, self._data, state))
         try:
-            self._sr.register_node(self._fullpath, self._data, state)
+            self._sr.set(self._fullpath, self._data, state)
             self.log.debug('[%s] sucessfully updated path %s with state %s' %
                           (self._service, self._fullpath, state))
             return True
