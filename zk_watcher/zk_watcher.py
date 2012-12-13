@@ -189,7 +189,7 @@ class WatcherDaemon(threading.Thread):
                 # We already have a watcher for this service. Update its
                 # object data, and let it keep running.
                 w.set(command=self._config.get(service, 'cmd'),
-                      data={},
+                      data=self._parse_data(self._config.get(service, 'zookeeper_data')),
                       refresh=self._config.get(service, 'refresh'))
 
             # If there's still no 'w' returned (either _get_watcher failed, or
@@ -201,7 +201,7 @@ class WatcherDaemon(threading.Thread):
                             service_port=self._config.get(service, 'service_port'),
                             command=self._config.get(service, 'cmd'),
                             path=self._config.get(service, 'zookeeper_path'),
-                            data={},
+                            data=self._parse_data(self._config.get(service, 'zookeeper_data')),
                             refresh=self._config.get(service, 'refresh'))
                 self._watchers.append(w)
 
@@ -218,6 +218,25 @@ class WatcherDaemon(threading.Thread):
             if watcher._service == service:
                 return watcher
         return None
+
+    def _parse_data(self, data):
+        """Convert a string of data from ConfigParse into our dict.
+
+        If any options are supplied to the zookeeper_data field, then we add
+        them to our node registration. The values must be comma-separated
+        and equals-separated. eg:
+     
+        foo=bar,abc=123
+
+        Args:
+            data: String representing key=value pairs comma separated"""
+        data_dict = {}
+        for pair in data.split(','):
+            if pair.split('=').__len__() == 2:
+                key = pair.split('=')[0]
+                value = pair.split('=')[1]
+                data_dict[key] = value
+        return data_dict
 
     def run(self):
         """Start up all of the worker threads and keep an eye on them"""
