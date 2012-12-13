@@ -41,7 +41,6 @@ Advanced Programming in the Unix Environment by W. Richard Stevens
 __author__ = 'matt@nextdoor.com (Matt Wise)'
 
 from sys import stdout, stderr
-import re
 import optparse
 import socket
 import subprocess
