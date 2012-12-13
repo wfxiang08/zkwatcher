@@ -314,13 +314,14 @@ class Watcher(threading.Thread):
             # taking up all kinds of resources.
             self._event.wait(1)
 
-        self.log.debug('Watcher %s is exiting the run() loop.' % self._service)
+        self._update(False)
+        self._sr.unset(self._fullpath)
         self._sr = None
+        self.log.debug('Watcher %s is exiting the run() loop.' % self._service)
 
     def stop(self):
         """Stop the run() loop."""
         self._event.set()
-        self._update(False)
 
     def _update(self, state):
         # Call ServiceRegistry.set() method with our state, data,
