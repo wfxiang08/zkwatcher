@@ -232,7 +232,7 @@ class Watcher(threading.Thread):
                        'data [%s], and state [%s].' %
                        (self._service, self._data, state))
         try:
-            self._sr.set(self._fullpath, self._data, state)
+            self._sr.set_node(self._fullpath, self._data, state)
             self.log.debug('[%s] sucessfully updated path %s with state %s' %
                           (self._service, self._fullpath, state))
             return True
