@@ -51,7 +51,6 @@ import ConfigParser
 import logging
 import logging.handlers
 import os
-import sys
 
 # Get our ServiceRegistry class
 from ndServiceRegistry import KazooServiceRegistry as ServiceRegistry
