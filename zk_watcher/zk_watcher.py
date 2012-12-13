@@ -102,13 +102,14 @@ class WatcherDaemon(threading.Thread):
         # Initiate our thread
         super(WatcherDaemon, self).__init__()
 
-        self._watchers = []
-
-        # Bring in our configuration options
-        self._parse_config(config_file)
-
         self.log = logging.getLogger(self.LOGGER)
         self.log.info('WatcherDaemon %s' % VERSION)
+
+        self._watchers = []
+        self._sr = None
+        self._config_file = config_file
+        self._server = server
+        self._verbose = verbose
 
         # Get a logger for ndServiceRegistry and set it to be quiet
         nd_log = logging.getLogger('ndServiceRegistry')
@@ -120,17 +121,32 @@ class WatcherDaemon(threading.Thread):
         # python interpreter exits, we exit immediately
         self.setDaemon(True)
 
+        # Watch for any signals
+        signal.signal(signal.SIGHUP, self._signal_handler)
+
+        # Bring in our configuration options
+        self._parse_config()
+
         # Create our ServiceRegistry object
-        self._sr = ServiceRegistry(server=server, lazy=True,
-                                   username=self.user, password=self.password)
+        self._connect()
 
         # Start up
         self.start()
 
-    def _parse_config(self, config_file):
+    def _signal_handler(self, signum, frame):
+        """Watch for certain signals"""
+        self.log.warning('Received signal: %s' % signum)
+        if signum == 1:
+            self.log.warning('Received SIGHUP. Reloading config.')
+            self._parse_config()
+            self._connect()
+            self._setup_watchers()
+
+    def _parse_config(self):
         """Read in the supplied config file and update our local settings."""
+        self.log.debug('Loading config...')
         self._config = ConfigParser.ConfigParser()
-        self._config.read(config_file)
+        self._config.read(self._config_file)
 
         # Check if auth data was supplied. If it is, read it in and then remove
         # it from our configuration object so its not used anywhere else.
@@ -141,20 +157,74 @@ class WatcherDaemon(threading.Thread):
         except (ConfigParser.NoOptionError, ConfigParser.NoSectionError):
             self.user = None
             self.password = None
-  
+
+    def _connect(self):
+        """Connects to the ServiceRegistry.
+
+        If already connected, updates the current connection settings."""
+
+        self.log.debug('Checking for ServiceRegistry object...')
+        if not self._sr:
+            self.log.debug('Creating new ServiceRegistry object...')
+            self._sr = ServiceRegistry(server=self._server, lazy=True,
+                                       username=self.user,
+                                       password=self.password)
+        else:
+            self.log.debug('Updating existing object...')
+            self._sr.set_username(self.user)
+            self._sr.set_password(self.password)
+
+    def _setup_watchers(self):
+        # For each watcher, see if we already have one for a given path or not.
+        for service in self._config.sections():
+            w = self._get_watcher(service)
+
+            if w:
+                # Certain fields cannot be changed without destroying the
+                # object and its registration with Zookeeper.
+                if w._service_port != self._config.get(service, 'service_port') or \
+                   w._path != self._config.get(service, 'zookeeper_path'):
+                    w.stop()
+                    w = None
+
+            if w:
+                # We already have a watcher for this service. Update its
+                # object data, and let it keep running.
+                w.set(command=self._config.get(service, 'cmd'),
+                      data={},
+                      refresh=self._config.get(service, 'refresh'))
+
+            # If there's still no 'w' returned (either _get_watcher failed, or
+            # we noticed that certain un-updatable fields were changed, then
+            # create a new object.
+            if not w:
+                w = Watcher(registry=self._sr,
+                            service=service,
+                            service_port=self._config.get(service, 'service_port'),
+                            command=self._config.get(service, 'cmd'),
+                            path=self._config.get(service, 'zookeeper_path'),
+                            data={},
+                            refresh=self._config.get(service, 'refresh'))
+                self._watchers.append(w)
+
+        # Check if any watchers need to be destroyed because they're no longer
+        # in our config.
+        for w in self._watchers:
+            if not w._service in list(self._config.sections()):
+                w.stop()
+                self._watchers.remove(w)
+
+    def _get_watcher(self, service):
+        """Returns a watcher based on the service name."""
+        for watcher in self._watchers:
+            if watcher._service == service:
+                return watcher
+        return None
+
     def run(self):
         """Start up all of the worker threads and keep an eye on them"""
 
-        # Create our individual watcher threads from the config sections
-        for service in self._config.sections():
-            w = Watcher(registry=self._sr,
-                        service=service,
-                        service_port=self._config.get(service, 'service_port'),
-                        command=self._config.get(service, 'cmd'),
-                        path=self._config.get(service, 'zookeeper_path'),
-                        data={},
-                        refresh=self._config.get(service, 'refresh'))
-            self._watchers.append(w)
+        self._setup_watchers()
 
         # Now, loop. Wait for a death signal
         while True and not self._event.is_set():
@@ -180,19 +250,32 @@ class Watcher(threading.Thread):
         super(Watcher, self).__init__()
 
         self._sr = registry
+        self._name = name
         self._service = service
         self._service_port = service_port
-        self._command = command
-        self._refresh = int(refresh)
         self._path = path
-        self._data = data
         self._fullpath = '%s/%s:%s' % (path, name, service_port)
+        self.set(command, data, refresh)
         self.log = logging.getLogger('%s.%s' % (self.LOGGER, self._service))
         self.log.debug('Initializing...')
 
         self._event = threading.Event()
         self.setDaemon(True)
         self.start()
+
+    def set(self, command, data, refresh):
+        """Public method for re-configuring our service checks.
+
+        NOTE: You cannot re-configure the port or server-name currently.
+
+        Args:
+            command: (String) command to execute
+            data: (String/Dict) configuration data to pass with registration
+            refresh: (Int) frequency (in seconds) of check"""
+
+        self._command = command
+        self._refresh = int(refresh)
+        self._data = data
 
     def run(self):
         """Monitors the supplied service, and keeps it registered.
@@ -215,12 +298,12 @@ class Watcher(threading.Thread):
                 if ret == 0:
                     # If the command was successfull...
                     self.log.info('[%s] returned successfully' % self._command)
-                    self.update(state=True)
+                    self._update(state=True)
                 else:
                     # If the command failed...
                     self.log.warning('[%s] returned a failed exit code [%s]' %
                                      (self._command, ret))
-                    self.update(state=False)
+                    self._update(state=False)
 
                 # Now that our service check is done, update our lastrun{}
                 # array with the current time, so that we can check how
@@ -232,14 +315,14 @@ class Watcher(threading.Thread):
             self._event.wait(1)
 
         self.log.debug('Watcher %s is exiting the run() loop.' % self._service)
+        self._sr = None
 
     def stop(self):
         """Stop the run() loop."""
         self._event.set()
-        self.update(False)
-        
+        self._update(False)
 
-    def update(self, state):
+    def _update(self, state):
         # Call ServiceRegistry.set() method with our state, data,
         # path information. The ServiceRegistry module will take care of
         # updating the data, state, etc.
@@ -321,7 +404,8 @@ class Command(object):
             return 1
 
 
-def main():
+def setup_logger():
+    """Configure our main logger object"""
     # Get our logger
     logger = logging.getLogger()
     pid = os.getpid()
@@ -342,7 +426,11 @@ def main():
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
-    # Define our WatcherDaemon object..
+    return logger
+
+
+def main():
+    logger = setup_logger()
     watcher = WatcherDaemon(
         config_file=options.config,
         server=options.server,
