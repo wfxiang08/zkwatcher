@@ -17,9 +17,7 @@
 SYNOPSIS
 ========
 
-| `zk_watcher` start [<start options>]
-| `zk_watcher` stop
-| `zk_watcher` restart
+| `zk_watcher` [<start options>]
 | `zk_watcher` --help
 
 
@@ -45,26 +43,13 @@ is `web1.mydomain.com`, the registration path would look like this ::
 USAGE
 =====
 
-zk_watcher start [-v|--verbose] [-c|--config=] [-s|--server=] [-f|--foreground]
-
-
-zk_watcher stop
-
-    Stops the existing `zk_watcher` daemon based on its PID in /var/run/zk_watcher.pid.
-
-zk_watcher restart
-
-    Stops, and then starts the `zk_watcher` daemon based on its PID in /var/run/zk_watcher.pid.
-
+zk_watcher [-v|--verbose] [-c|--config=] [-s|--server=]
 
 OPTIONS
 =======
 
 -v, --verbose
             Enables verbose logging 
-
--f, --foreground
-            Runs the daemon in foreground mode
 
 -c, --config=<config file>
             Overrides the default config file location (/etc/zk/config.cfg)

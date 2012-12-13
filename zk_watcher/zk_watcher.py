@@ -105,8 +105,7 @@ class WatcherDaemon(threading.Thread):
         self._watchers = []
 
         # Bring in our configuration options
-        self._config = ConfigParser.ConfigParser()
-        self._config.read(config_file)
+        self._parse_config(config_file)
 
         self.log = logging.getLogger(self.LOGGER)
         self.log.info('WatcherDaemon %s' % VERSION)
@@ -122,11 +121,27 @@ class WatcherDaemon(threading.Thread):
         self.setDaemon(True)
 
         # Create our ServiceRegistry object
-        self._sr = ServiceRegistry(server=server, lazy=True)
+        self._sr = ServiceRegistry(server=server, lazy=True,
+                                   username=self.user, password=self.password)
 
         # Start up
         self.start()
 
+    def _parse_config(self, config_file):
+        """Read in the supplied config file and update our local settings."""
+        self._config = ConfigParser.ConfigParser()
+        self._config.read(config_file)
+
+        # Check if auth data was supplied. If it is, read it in and then remove
+        # it from our configuration object so its not used anywhere else.
+        try:
+            self.user = self._config.get('auth', 'user')
+            self.password = self._config.get('auth', 'password')
+            self._config.remove_section('auth')
+        except (ConfigParser.NoOptionError, ConfigParser.NoSectionError):
+            self.user = None
+            self.password = None
+  
     def run(self):
         """Start up all of the worker threads and keep an eye on them"""
 
