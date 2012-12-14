@@ -196,13 +196,13 @@ class WatcherDaemon(threading.Thread):
             # we noticed that certain un-updatable fields were changed, then
             # create a new object.
             if not w:
-                w = Watcher(registry=self._sr,
-                            service=service,
-                            service_port=self._config.get(service, 'service_port'),
-                            command=self._config.get(service, 'cmd'),
-                            path=self._config.get(service, 'zookeeper_path'),
-                            data=self._parse_data(self._config.get(service, 'zookeeper_data')),
-                            refresh=self._config.get(service, 'refresh'))
+                w = ServiceWatcher(registry=self._sr,
+                                  service=service,
+                                  service_port=self._config.get(service, 'service_port'),
+                                  command=self._config.get(service, 'cmd'),
+                                  path=self._config.get(service, 'zookeeper_path'),
+                                  data=self._parse_data(self._config.get(service, 'zookeeper_data')),
+                                  refresh=self._config.get(service, 'refresh'))
                 self._watchers.append(w)
 
         # Check if any watchers need to be destroyed because they're no longer
@@ -255,16 +255,16 @@ class WatcherDaemon(threading.Thread):
         self._event.set()
 
 
-class Watcher(threading.Thread):
+class ServiceWatcher(threading.Thread):
     """Monitors a particular service definition."""
 
-    LOGGER = 'WatcherDaemon.Watcher'
+    LOGGER = 'WatcherDaemon.ServiceWatcher'
 
     def __init__(self, registry, service, service_port, command, path, data,
                  name=socket.getfqdn(), refresh=15):
         """Initialize the object and begin monitoring the service."""
         # Initiate our thread
-        super(Watcher, self).__init__()
+        super(ServiceWatcher, self).__init__()
 
         self._sr = registry
         self._name = name
