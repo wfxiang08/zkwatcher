@@ -24,6 +24,14 @@ PACKAGE = 'zk_watcher'
 __version__ = None
 execfile(os.path.join(PACKAGE, 'version.py'))  # set __version__
 
+manpath = 'man'
+if os.path.realpath('/usr/local/man') == '/usr/local/share/man':
+    # This works around a bug with install where it expects every node
+    # in the relative data directory to be an actual directory, since at
+    # least Debian derivatives (and probably other platforms as well)
+    # like to symlink Unixish /usr/local/man to /usr/local/share/man.
+    manpath = os.path.join('share', manpath)
+
 
 class SourceDistHook(sdist):
 
@@ -51,7 +59,6 @@ class CleanHook(clean):
             maybe_rm('zk_watcher.egg-info')
             maybe_rm('dist')
 
-
 setup(
     name='zk_watcher',
     version=__version__,
@@ -68,7 +75,7 @@ setup(
         'console_scripts': ['zk_watcher = zk_watcher.zk_watcher:main'],
     },
     data_files=[
-        ('man/man1', ['zk_watcher.1']),
+        (os.path.join(manpath, 'man1'), ['zk_watcher.1']),
         ('/etc/zk', ['extras/zk/config.cfg']),
     ],
     install_requires=[
