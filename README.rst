@@ -1,10 +1,3 @@
-==========
-DISCLAIMER
-==========
-The `master` branch is under heavy development and currently relies on a not-
-yet released package named `ndServiceRegistry`. Please make sure that for now
-you continue to use tag 0.1.0.
-
 =========
 zkwatcher
 =========
