@@ -79,7 +79,7 @@ setup(
         ('/etc/zk', ['extras/zk/config.cfg']),
     ],
     install_requires=[
-        'ndServiceRegistry',
+        'ndServiceRegistry >= 0.1.1',
         'setuptools',
     ],
     classifiers=[
