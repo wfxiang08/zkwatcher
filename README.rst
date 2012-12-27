@@ -43,15 +43,16 @@ ZooKeeper. An example file is provided, but could look like this ::
     cmd: /etc/init.d/sshd status
     refresh: 60
     service_port: 22
+    service_hostname: 123.234.123.123
     zookeeper_path: /services/ssh
-    zookeeper_data: 
+    zookeeper_data: { "foo": "bar", "bah": "humbug" }
 
     [apache]
     cmd: /etc/init.d/apache status
     refresh: 60
     service_port: 22
     zookeeper_path: /services/web
-    zookeeper_data: 
+    zookeeper_data: foo=bar, bah=humbug
 
 Authentication
 --------------
