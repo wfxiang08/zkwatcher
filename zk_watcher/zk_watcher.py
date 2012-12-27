@@ -178,32 +178,54 @@ class WatcherDaemon(threading.Thread):
         for service in self._config.sections():
             w = self._get_watcher(service)
 
+            # Gather up the config data for our section into a few local
+            # variables so that we can shorten the statements below.
+            command = self._config.get(service, 'cmd')
+            service_port = self._config.get(service, 'service_port')
+            zookeeper_path = self._config.get(service, 'zookeeper_path')
+            refresh = self._config.get(service, 'refresh')
+
+            # Gather our optional parameters. If they don't exist, set
+            # some reasonable default.
+            try:
+                zookeeper_data = self._parse_data(
+                    self._config.get(service, 'zookeeper_data'))
+            except:
+                zookeeper_data = {}
+
+            try:
+                service_hostname = self._config.get(service, 'service_hostname')
+            except:
+                service_hostname = socket.getfqdn()
+
             if w:
                 # Certain fields cannot be changed without destroying the
                 # object and its registration with Zookeeper.
-                if w._service_port != self._config.get(service, 'service_port') or \
-                   w._path != self._config.get(service, 'zookeeper_path'):
+                if w._service_port != service_port or \
+                    w._service_hostname != service_hostname or \
+                        w._path != zookeeper_path:
                     w.stop()
                     w = None
 
             if w:
                 # We already have a watcher for this service. Update its
                 # object data, and let it keep running.
-                w.set(command=self._config.get(service, 'cmd'),
-                      data=self._parse_data(self._config.get(service, 'zookeeper_data')),
-                      refresh=self._config.get(service, 'refresh'))
+                w.set(command=command,
+                      data=zookeeper_data,
+                      refresh=refresh)
 
             # If there's still no 'w' returned (either _get_watcher failed, or
             # we noticed that certain un-updatable fields were changed, then
             # create a new object.
             if not w:
                 w = ServiceWatcher(registry=self._sr,
-                                  service=service,
-                                  service_port=self._config.get(service, 'service_port'),
-                                  command=self._config.get(service, 'cmd'),
-                                  path=self._config.get(service, 'zookeeper_path'),
-                                  data=self._parse_data(self._config.get(service, 'zookeeper_data')),
-                                  refresh=self._config.get(service, 'refresh'))
+                                   service=service,
+                                   service_port=service_port,
+                                   service_hostname=service_hostname,
+                                   command=command,
+                                   path=zookeeper_path,
+                                   data=zookeeper_data,
+                                   refresh=refresh)
                 self._watchers.append(w)
 
         # Check if any watchers need to be destroyed because they're no longer
@@ -226,7 +248,7 @@ class WatcherDaemon(threading.Thread):
         If any options are supplied to the zookeeper_data field, then we add
         them to our node registration. The values must be comma-separated
         and equals-separated. eg:
-     
+
         foo=bar,abc=123
 
         Args:
@@ -262,17 +284,17 @@ class ServiceWatcher(threading.Thread):
     LOGGER = 'WatcherDaemon.ServiceWatcher'
 
     def __init__(self, registry, service, service_port, command, path, data,
-                 name=socket.getfqdn(), refresh=15):
+                 service_hostname, refresh=15):
         """Initialize the object and begin monitoring the service."""
         # Initiate our thread
         super(ServiceWatcher, self).__init__()
 
         self._sr = registry
-        self._name = name
         self._service = service
         self._service_port = service_port
+        self._service_hostname = service_hostname
         self._path = path
-        self._fullpath = '%s/%s:%s' % (path, name, service_port)
+        self._fullpath = '%s/%s:%s' % (path, service_hostname, service_port)
         self.set(command, data, refresh)
         self.log = logging.getLogger('%s.%s' % (self.LOGGER, self._service))
         self.log.debug('Initializing...')
@@ -315,7 +337,7 @@ class ServiceWatcher(threading.Thread):
 
                 if ret == 0:
                     # If the command was successfull...
-                    self.log.debug('[%s] returned successfully' % self._command)
+                    self.log.debug('[%s] returned successfull' % self._command)
                     self._update(state=True)
                 else:
                     # If the command failed...
