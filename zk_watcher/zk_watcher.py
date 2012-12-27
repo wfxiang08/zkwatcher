@@ -54,6 +54,7 @@ import os
 
 # Get our ServiceRegistry class
 from ndServiceRegistry import KazooServiceRegistry as ServiceRegistry
+from ndServiceRegistry import exceptions
 
 # Our default variables
 from version import __version__ as VERSION
@@ -352,7 +353,7 @@ class ServiceWatcher(threading.Thread):
             self.log.debug('[%s] sucessfully updated path %s with state %s' %
                           (self._service, self._fullpath, state))
             return True
-        except Exception, e:
+        except exceptions.NoConnection, e:
             self.log.warn('[%s] could not update path %s with state %s: %s' %
                          (self._service, self._fullpath, state, e))
             return False
