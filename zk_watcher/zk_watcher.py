@@ -30,12 +30,11 @@ monitor the service. Eg:
   cmd: pgrep memcached
   refresh: 30
   service_port: 11211
+  service_hostname: 123.123.123.123
   zookeeper_path: /services/prod-uswest1-mc
-  zookeeper_data: foo=bar
+  zookeeper_data: { "foo": "bar", "bar": "foo" }
 
 Copyright 2012 Nextdoor Inc.
-References: http://code.activestate.com/recipes/66012/
-Advanced Programming in the Unix Environment by W. Richard Stevens
 """
 
 __author__ = 'matt@nextdoor.com (Matt Wise)'
@@ -46,6 +45,7 @@ import socket
 import subprocess
 import threading
 import time
+import json
 import signal
 import ConfigParser
 import logging
@@ -245,20 +245,26 @@ class WatcherDaemon(threading.Thread):
     def _parse_data(self, data):
         """Convert a string of data from ConfigParse into our dict.
 
-        If any options are supplied to the zookeeper_data field, then we add
-        them to our node registration. The values must be comma-separated
-        and equals-separated. eg:
+        The zookeeper_data field supports one of two types of fields. Either
+        a single key=value string, or a JSON-formatted set of key=value
+        pairs:
 
-        foo=bar,abc=123
+            zookeeper_data: foo=bar
+            zookeeper_data: foo=bar, bar=foo
+            zookeeper_data: { "foo": "bar", "bar": "foo" }
 
         Args:
-            data: String representing key=value pairs comma separated"""
-        data_dict = {}
-        for pair in data.split(','):
-            if pair.split('=').__len__() == 2:
-                key = pair.split('=')[0]
-                value = pair.split('=')[1]
-                data_dict[key] = value
+            data: String representing data above"""
+
+        try:
+            data_dict = json.loads(data)
+        except:
+            data_dict = {}
+            for pair in data.split(','):
+                if pair.split('=').__len__() == 2:
+                    key = pair.split('=')[0]
+                    value = pair.split('=')[1]
+                    data_dict[key] = value
         return data_dict
 
     def run(self):
