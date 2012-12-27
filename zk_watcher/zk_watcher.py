@@ -314,7 +314,7 @@ class ServiceWatcher(threading.Thread):
 
                 if ret == 0:
                     # If the command was successfull...
-                    self.log.info('[%s] returned successfully' % self._command)
+                    self.log.debug('[%s] returned successfully' % self._command)
                     self._update(state=True)
                 else:
                     # If the command failed...
