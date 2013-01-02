@@ -53,8 +53,8 @@ import logging.handlers
 import os
 
 # Get our ServiceRegistry class
-from ndServiceRegistry import KazooServiceRegistry as ServiceRegistry
-from ndServiceRegistry import exceptions
+from nd_service_registry import KazooServiceRegistry as ServiceRegistry
+from nd_service_registry import exceptions
 
 # Our default variables
 from version import __version__ as VERSION
@@ -110,8 +110,8 @@ class WatcherDaemon(threading.Thread):
         self._server = server
         self._verbose = verbose
 
-        # Get a logger for ndServiceRegistry and set it to be quiet
-        nd_log = logging.getLogger('ndServiceRegistry')
+        # Get a logger for nd_service_registry and set it to be quiet
+        nd_log = logging.getLogger('nd_service_registry')
 
         # Set up our threading environment
         self._event = threading.Event()

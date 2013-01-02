@@ -65,7 +65,7 @@ like this ::
     user: username
     password: 123456
 
-If you do this, please look at the `ndServiceRegistry` docs to understand how
+If you do this, please look at the `nd_service_registry` docs to understand how
 the auth token is used, and what permissions are setup by default.
 
 Running it
