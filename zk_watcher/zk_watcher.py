@@ -456,8 +456,8 @@ def setup_logger():
     # Get our logger
     logger = logging.getLogger()
     pid = os.getpid()
-    format = 'zk_watcher[' + str(pid) + ',%(name)s' \
-             ',%(funcName)s]: (%(levelname)s) %(message)s'
+    format = 'zk_watcher[' + str(pid) + '] [%(name)s] ' \
+             '[%(funcName)s]: (%(levelname)s) %(message)s'
     formatter = logging.Formatter(format)
 
     if options.verbose:
