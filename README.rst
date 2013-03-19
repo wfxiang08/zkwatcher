@@ -117,7 +117,7 @@ Clone the repo and setup your hooks:::
 
     $ git clone review.opensource.nextdoor.com:zkwatcher
     $ cd zkwatcher
-    $ etc/install-git-hooks.sh
+    $ etc/configure-repository.sh
 
 Make your change, and submit it:::
 
