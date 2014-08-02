@@ -13,51 +13,11 @@
 # limitations under the License.
 
 import os
-import shutil
-import subprocess
-
-from distutils.command.clean import clean
-from distutils.command.sdist import sdist
 from setuptools import setup
 
 PACKAGE = 'zk_watcher'
 __version__ = None
 execfile(os.path.join(PACKAGE, 'version.py'))  # set __version__
-
-manpath = 'man'
-if os.path.realpath('/usr/local/man') == '/usr/local/share/man':
-    # This works around a bug with install where it expects every node
-    # in the relative data directory to be an actual directory, since at
-    # least Debian derivatives (and probably other platforms as well)
-    # like to symlink Unixish /usr/local/man to /usr/local/share/man.
-    manpath = os.path.join('share', manpath)
-
-
-class SourceDistHook(sdist):
-
-    def run(self):
-        with open('version.rst', 'w') as f:
-            f.write(':Version: %s\n' % __version__)
-        shutil.copy('README.rst', 'README')
-        subprocess.call(['rst2man', 'zk_watcher.rst', 'zk_watcher.1'])
-        sdist.run(self)
-        os.unlink('MANIFEST')
-        os.unlink('README')
-        os.unlink('zk_watcher.1')
-        os.unlink('version.rst')
-
-
-class CleanHook(clean):
-
-    def run(self):
-        clean.run(self)
-
-        def maybe_rm(path):
-            if os.path.exists(path):
-                shutil.rmtree(path)
-        if self.all:
-            maybe_rm('zk_watcher.egg-info')
-            maybe_rm('dist')
 
 setup(
     name='zk_watcher',
@@ -74,10 +34,6 @@ setup(
     entry_points={
         'console_scripts': ['zk_watcher = zk_watcher.zk_watcher:main'],
     },
-    data_files=[
-        (os.path.join(manpath, 'man1'), ['zk_watcher.1']),
-        ('/etc/zk', ['extras/zk/config.cfg']),
-    ],
     install_requires=[
         'nd_service_registry >= 0.2.5',
         'setuptools',
@@ -91,5 +47,4 @@ setup(
         'Operating System :: POSIX',
         'Natural Language :: English',
     ],
-    cmdclass={'sdist': SourceDistHook, 'clean': CleanHook},
 )
