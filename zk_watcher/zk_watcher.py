@@ -106,7 +106,7 @@ class WatcherDaemon(threading.Thread):
         self.log.info('WatcherDaemon %s' % VERSION)
 
         self._watchers = []
-        self._sr = None
+        self._server_reg = None
         self._config_file = config_file
         self._server = server
         self._verbose = verbose
@@ -125,9 +125,11 @@ class WatcherDaemon(threading.Thread):
         signal.signal(signal.SIGHUP, self._signal_handler)
 
         # Bring in our configuration options
+        # 1. 读取配置文件
         self._parse_config()
 
         # Create our ServiceRegistry object
+        # 2. 创建连接?
         self._connect()
 
         # Start up
@@ -136,6 +138,8 @@ class WatcherDaemon(threading.Thread):
     def _signal_handler(self, signum, frame):
         """Watch for certain signals"""
         self.log.warning('Received signal: %s' % signum)
+
+        # 重新加载config
         if signum == 1:
             self.log.warning('Received SIGHUP. Reloading config.')
             self._parse_config()
@@ -145,9 +149,12 @@ class WatcherDaemon(threading.Thread):
     def _parse_config(self):
         """Read in the supplied config file and update our local settings."""
         self.log.debug('Loading config...')
+
+        # 1. 如何读取config文件呢?
         self._config = ConfigParser.ConfigParser()
         self._config.read(self._config_file)
 
+        # 2. 读取auth数据
         # Check if auth data was supplied. If it is, read it in and then remove
         # it from our configuration object so its not used anywhere else.
         try:
@@ -164,20 +171,31 @@ class WatcherDaemon(threading.Thread):
         If already connected, updates the current connection settings."""
 
         self.log.debug('Checking for ServiceRegistry object...')
-        if not self._sr:
+        if not self._server_reg:
             self.log.debug('Creating new ServiceRegistry object...')
-            self._sr = ServiceRegistry(server=self._server, lazy=True,
-                                       username=self.user,
-                                       password=self.password)
+            # 通过用户名，密码连接到注册服务器
+            self._server_reg = ServiceRegistry(server=self._server, lazy=True, username=self.user, password=self.password)
         else:
             self.log.debug('Updating existing object...')
-            self._sr.set_username(self.user)
-            self._sr.set_password(self.password)
+            self._server_reg.set_username(self.user)
+            self._server_reg.set_password(self.password)
 
     def _setup_watchers(self):
+        # config中的配置信息
+        # [memcache]
+        # cmd: pgrep memcached
+        # refresh: 30
+        # service_port: 11211
+        # service_hostname: 123.123.123.123
+        # zookeeper_path: /services/prod-uswest1-mc
+        # zookeeper_data: { "foo": "bar", "bar": "foo" }
+        #
         # For each watcher, see if we already have one for a given path or not.
         for service in self._config.sections():
-            w = self._get_watcher(service)
+
+            # 1. 尽量复用以前的watcher
+            # service如: memcache, mysql等
+            watcher = self._get_watcher(service)
 
             # Gather up the config data for our section into a few local
             # variables so that we can shorten the statements below.
@@ -189,8 +207,7 @@ class WatcherDaemon(threading.Thread):
             # Gather our optional parameters. If they don't exist, set
             # some reasonable default.
             try:
-                zookeeper_data = self._parse_data(
-                    self._config.get(service, 'zookeeper_data'))
+                zookeeper_data = self._parse_data(self._config.get(service, 'zookeeper_data'))
             except:
                 zookeeper_data = {}
 
@@ -199,27 +216,27 @@ class WatcherDaemon(threading.Thread):
             except:
                 service_hostname = socket.getfqdn()
 
-            if w:
+            # 检查watcher的信息是否发生变化呢?
+            if watcher:
                 # Certain fields cannot be changed without destroying the
                 # object and its registration with Zookeeper.
-                if w._service_port != service_port or \
-                    w._service_hostname != service_hostname or \
-                        w._path != zookeeper_path:
-                    w.stop()
-                    w = None
+                if watcher._service_port != service_port or \
+                    watcher._service_hostname != service_hostname or \
+                        watcher._path != zookeeper_path:
+                    watcher.stop()
+                    watcher = None
 
-            if w:
+            # 2. 更新watcher的信息
+            if watcher:
                 # We already have a watcher for this service. Update its
                 # object data, and let it keep running.
-                w.set(command=command,
-                      data=zookeeper_data,
-                      refresh=refresh)
+                watcher.set(command=command, data=zookeeper_data, refresh=refresh)
 
             # If there's still no 'w' returned (either _get_watcher failed, or
             # we noticed that certain un-updatable fields were changed, then
             # create a new object.
-            if not w:
-                w = ServiceWatcher(registry=self._sr,
+            if not watcher:
+                watcher = ServiceWatcher(registry=self._server_reg,
                                    service=service,
                                    service_port=service_port,
                                    service_hostname=service_hostname,
@@ -227,14 +244,15 @@ class WatcherDaemon(threading.Thread):
                                    path=zookeeper_path,
                                    data=zookeeper_data,
                                    refresh=refresh)
-                self._watchers.append(w)
+                self._watchers.append(watcher)
 
         # Check if any watchers need to be destroyed because they're no longer
         # in our config.
-        for w in self._watchers:
-            if not w._service in list(self._config.sections()):
-                w.stop()
-                self._watchers.remove(w)
+        # 删除过期的watcher
+        for watcher in self._watchers:
+            if not watcher._service in list(self._config.sections()):
+                watcher.stop()
+                self._watchers.remove(watcher)
 
     def _get_watcher(self, service):
         """Returns a watcher based on the service name."""
@@ -296,7 +314,7 @@ class ServiceWatcher(threading.Thread):
         # Initiate our thread
         super(ServiceWatcher, self).__init__()
 
-        self._sr = registry
+        self._server_reg = registry
         self._service = service
         self._service_port = service_port
         self._service_hostname = service_hostname
@@ -334,6 +352,7 @@ class ServiceWatcher(threading.Thread):
         last_checked = 0
         self.log.debug('Beginning run() loop')
         while True and not self._event.is_set():
+            # 以_refresh间隔来做检查
             if time.time() - last_checked > self._refresh:
                 self.log.debug('[%s] running' % self._command)
 
@@ -361,9 +380,17 @@ class ServiceWatcher(threading.Thread):
             # taking up all kinds of resources.
             self._event.wait(1)
 
+        # watcher一挂似乎对应的服务也挂了，这个是一个大风险呀!
+        # 1. 这个地方可能需要注意，例如: 如果我们监控MySQL或Redis等，如果监控服务挂了，主服务就暂时不要停止
+        # 2. 如果整个机器挂了，那么如何做到监控呢?
+        # 例如:
+        #     online_medweb/service/mysql/mysql1
+        #
+        #      online_medweb/service/mysql/mysql2
+        #      online_medweb/service/mysql/mysql3
         self._update(False)
-        self._sr.unset(self._fullpath)
-        self._sr = None
+        self._server_reg.unset(self._fullpath)
+        self._server_reg = None
         self.log.debug('Watcher %s is exiting the run() loop.' % self._service)
 
     def stop(self):
@@ -374,17 +401,13 @@ class ServiceWatcher(threading.Thread):
         # Call ServiceRegistry.set() method with our state, data,
         # path information. The ServiceRegistry module will take care of
         # updating the data, state, etc.
-        self.log.debug('Attempting to update service [%s] with '
-                       'data [%s], and state [%s].' %
-                       (self._service, self._data, state))
+        self.log.debug('Attempting to update service [%s] with data [%s], and state [%s].' % (self._service, self._data, state))
         try:
-            self._sr.set_node(self._fullpath, self._data, state)
-            self.log.debug('[%s] sucessfully updated path %s with state %s' %
-                          (self._service, self._fullpath, state))
+            self._server_reg.set_node(self._fullpath, self._data, state)
+            self.log.debug('[%s] sucessfully updated path %s with state %s' % (self._service, self._fullpath, state))
             return True
         except exceptions.NoConnection, e:
-            self.log.warn('[%s] could not update path %s with state %s: %s' %
-                         (self._service, self._fullpath, state, e))
+            self.log.warn('[%s] could not update path %s with state %s: %s' % (self._service, self._fullpath, state, e))
             return False
 
 
@@ -479,6 +502,8 @@ def setup_logger():
 
 def main():
     logger = setup_logger()
+
+    # watcher？
     watcher = WatcherDaemon(
         config_file=options.config,
         server=options.server,
